@@ -49,7 +49,6 @@ impl K8sTypesFetcher {
             pb.set_message(format!("Fetching Kubernetes {} OpenAPI schema...", version));
             Some(pb)
         } else {
-            println!("Fetching Kubernetes {} OpenAPI schema...", version);
             None
         };
 
@@ -90,8 +89,6 @@ impl K8sTypesFetcher {
 
         if let Some(pb) = pb {
             pb.finish_with_message(format!("✓ Fetched Kubernetes {} OpenAPI schema", version));
-        } else {
-            println!("Successfully fetched Kubernetes {} OpenAPI schema", version);
         }
 
         Ok(schema)
@@ -184,7 +181,7 @@ impl K8sTypesFetcher {
             "io.k8s.api.batch.v1beta1.CronJob",
             // Certificates v1alpha1 (alpha certificate APIs)
             "io.k8s.api.certificates.v1alpha1.ClusterTrustBundle",
-            // Coordination v1alpha1 & v1beta1 (coordination APIs)  
+            // Coordination v1alpha1 & v1beta1 (coordination APIs)
             "io.k8s.api.coordination.v1alpha1.LeaseCandidacy",
             "io.k8s.api.coordination.v1alpha2.LeaseCandidacy",
             // Extensions v1beta1 (deprecated but still present)
@@ -385,12 +382,10 @@ impl K8sTypesFetcher {
             return Ok(match type_name {
                 name if name.ends_with(".Time") || name.ends_with(".MicroTime") => Type::String,
                 name if name.ends_with(".Duration") => Type::String,
-                name if name.ends_with(".IntOrString") => {
-                    Type::Union {
-                        types: vec![Type::Integer, Type::String],
-                        coercion_hint: Some(amalgam_core::types::UnionCoercion::PreferString),
-                    }
-                }
+                name if name.ends_with(".IntOrString") => Type::Union {
+                    types: vec![Type::Integer, Type::String],
+                    coercion_hint: Some(amalgam_core::types::UnionCoercion::PreferString),
+                },
                 name if name.ends_with(".Quantity") => Type::String,
                 name if name.ends_with(".FieldsV1") => Type::Any,
                 name if name.starts_with("io.k8s.") => {
@@ -464,12 +459,12 @@ impl K8sTypesFetcher {
                                 // Duration is a string
                                 name if name.ends_with(".Duration") => Type::String,
                                 // IntOrString can be either
-                                name if name.ends_with(".IntOrString") => {
-                                    Type::Union {
-                                        types: vec![Type::Integer, Type::String],
-                                        coercion_hint: Some(amalgam_core::types::UnionCoercion::PreferString),
-                                    }
-                                }
+                                name if name.ends_with(".IntOrString") => Type::Union {
+                                    types: vec![Type::Integer, Type::String],
+                                    coercion_hint: Some(
+                                        amalgam_core::types::UnionCoercion::PreferString,
+                                    ),
+                                },
                                 // Quantity is a string (like "100m" or "1Gi")
                                 name if name.ends_with(".Quantity")
                                     || name == "io.k8s.apimachinery.pkg.api.resource.Quantity" =>
@@ -531,12 +526,12 @@ impl K8sTypesFetcher {
                                             Type::String
                                         }
                                         s if s.ends_with(".Duration") => Type::String,
-                                        s if s.ends_with(".IntOrString") => {
-                                            Type::Union {
-                                                types: vec![Type::Integer, Type::String],
-                                                coercion_hint: Some(amalgam_core::types::UnionCoercion::PreferString),
-                                            }
-                                        }
+                                        s if s.ends_with(".IntOrString") => Type::Union {
+                                            types: vec![Type::Integer, Type::String],
+                                            coercion_hint: Some(
+                                                amalgam_core::types::UnionCoercion::PreferString,
+                                            ),
+                                        },
                                         s if s.ends_with(".Quantity") => Type::String,
                                         s if s.ends_with(".FieldsV1") => Type::Any,
                                         s if s.starts_with("io.k8s.") => {
@@ -605,18 +600,19 @@ impl K8sTypesFetcher {
                 if let Some(ref_path) = schema.get("$ref").and_then(|r| r.as_str()) {
                     let type_name = ref_path.trim_start_matches("#/definitions/");
                     // Extract module information if present
-                    let (name, module) = if type_name.starts_with("io.k8s.") && type_name.contains('.') {
-                        let parts: Vec<&str> = type_name.split('.').collect();
-                        if parts.len() > 1 {
-                            let short_name = parts[parts.len() - 1].to_string();
-                            let module_path = parts[..parts.len() - 1].join(".");
-                            (short_name, Some(module_path))
+                    let (name, module) =
+                        if type_name.starts_with("io.k8s.") && type_name.contains('.') {
+                            let parts: Vec<&str> = type_name.split('.').collect();
+                            if parts.len() > 1 {
+                                let short_name = parts[parts.len() - 1].to_string();
+                                let module_path = parts[..parts.len() - 1].join(".");
+                                (short_name, Some(module_path))
+                            } else {
+                                (type_name.to_string(), None)
+                            }
                         } else {
                             (type_name.to_string(), None)
-                        }
-                    } else {
-                        (type_name.to_string(), None)
-                    };
+                        };
                     Ok(Type::Reference { name, module })
                 } else {
                     Ok(Type::Any)

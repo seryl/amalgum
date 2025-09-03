@@ -148,7 +148,13 @@ mod tests {
         assert!(ts.is_compatible(&Type::Null, &Type::Optional(Box::new(Type::String))));
 
         // Test reference resolution
-        assert!(ts.is_compatible(&Type::Reference { name: "MyString".to_string(), module: None }, &Type::String));
+        assert!(ts.is_compatible(
+            &Type::Reference {
+                name: "MyString".to_string(),
+                module: None
+            },
+            &Type::String
+        ));
 
         // Test union types
         let union = Type::Union {

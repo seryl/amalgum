@@ -425,10 +425,10 @@ spec:
     // Verify we can generate files for each version
     let v1alpha1_files = package.generate_version_files("test.io", "v1alpha1");
     assert!(v1alpha1_files.contains_key("evolving.ncl"));
-    
+
     let v1beta1_files = package.generate_version_files("test.io", "v1beta1");
     assert!(v1beta1_files.contains_key("evolving.ncl"));
-    
+
     let v1_files = package.generate_version_files("test.io", "v1");
     assert!(v1_files.contains_key("evolving.ncl"));
 }

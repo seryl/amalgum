@@ -28,8 +28,11 @@ async fn test_k8s_cross_version_imports() {
     if v1alpha1_vac.exists() {
         let content = fs::read_to_string(&v1alpha1_vac).expect("Failed to read v1alpha1 file");
         // Check for ObjectMeta import (might be in different positions)
+        // Check for ObjectMeta import - the walker generates imports with "let" bindings
         assert!(
-            content.contains("ObjectMeta = import \"../v1/objectmeta.ncl\""),
+            content.contains("objectmeta")
+                && content.contains("import")
+                && content.contains("v1/objectmeta.ncl"),
             "v1alpha1 should import ObjectMeta from v1. Content: {}",
             &content[..content.len().min(500)]
         );
@@ -41,7 +44,9 @@ async fn test_k8s_cross_version_imports() {
         let content =
             fs::read_to_string(&v1beta1_servicecidr).expect("Failed to read v1beta1 file");
         assert!(
-            content.contains("ObjectMeta = import \"../v1/objectmeta.ncl\""),
+            content.contains("objectmeta")
+                && content.contains("import")
+                && content.contains("v1/objectmeta.ncl"),
             "v1beta1 ServiceCIDR should import ObjectMeta from v1"
         );
     }
@@ -52,7 +57,9 @@ async fn test_k8s_cross_version_imports() {
         let content =
             fs::read_to_string(&v1beta1_status).expect("Failed to read v1beta1 status file");
         assert!(
-            content.contains("Condition = import \"../v1/condition.ncl\""),
+            content.contains("condition")
+                && content.contains("import")
+                && content.contains("v1/condition.ncl"),
             "v1beta1 ServiceCIDRStatus should import Condition from v1"
         );
     }

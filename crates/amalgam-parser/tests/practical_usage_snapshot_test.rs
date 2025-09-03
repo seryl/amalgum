@@ -6,7 +6,7 @@
 use amalgam_parser::{crd::CRD, package::PackageGenerator};
 use insta::assert_snapshot;
 use std::process::Command;
-use tracing::{debug, info, warn, error, instrument};
+use tracing::{debug, info, instrument, warn};
 
 /// Test helper to evaluate Nickel code and capture both success/failure and output
 #[instrument(skip(code), fields(code_len = code.len()))]
@@ -17,34 +17,37 @@ fn evaluate_nickel_code(code: &str, _package_path: Option<&str>) -> (bool, Strin
         .and_then(|p| p.parent()) // Go up from crates/amalgam-parser to project root
         .expect("Failed to find project root")
         .to_path_buf();
-    
+
     debug!(project_root = ?project_root, "Determined project root");
-    
+
     // Create unique temp file in project root so imports work
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let unique_id = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let temp_file = project_root.join(format!("test_snapshot_temp_{}_{}.ncl", 
-        std::process::id(), unique_id));
-    
+    let temp_file = project_root.join(format!(
+        "test_snapshot_temp_{}_{}.ncl",
+        std::process::id(),
+        unique_id
+    ));
+
     debug!(temp_file = ?temp_file, unique_id = unique_id, "Creating temp file");
-    
+
     // Write the test code to a file
     std::fs::write(&temp_file, code).expect("Failed to write test file");
-    
+
     // Build nickel command
     let mut cmd = Command::new("nickel");
     cmd.arg("eval").arg(&temp_file);
     cmd.current_dir(&project_root);
-    
+
     debug!("Executing nickel eval");
-    
+
     // Execute and capture output
     let output = cmd.output().expect("Failed to execute nickel");
     let success = output.status.success();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     if !success {
         warn!(
             exit_code = ?output.status.code(),
@@ -55,16 +58,16 @@ fn evaluate_nickel_code(code: &str, _package_path: Option<&str>) -> (bool, Strin
     } else {
         info!(stdout_len = stdout.len(), "Nickel evaluation succeeded");
     }
-    
+
     // Clean up temp file
     let _ = std::fs::remove_file(&temp_file);
-    
+
     let combined_output = if success {
         stdout.to_string()
     } else {
         format!("STDERR:\n{}\nSTDOUT:\n{}", stderr, stdout)
     };
-    
+
     (success, combined_output)
 }
 
@@ -92,20 +95,16 @@ let k8s = import "examples/pkgs/k8s_io/mod.ncl" in
   metric_target = k8s.v2.MetricTarget & {},
 }
 "#;
-    
+
     let (success, output) = evaluate_nickel_code(test_code, None);
-    
+
     // Create a comprehensive snapshot that shows both success status and structure
-    let snapshot_content = format!(
-        "SUCCESS: {}\n\nOUTPUT:\n{}", 
-        success, 
-        output
-    );
-    
+    let snapshot_content = format!("SUCCESS: {}\n\nOUTPUT:\n{}", success, output);
+
     assert_snapshot!("k8s_empty_objects", snapshot_content);
-    
-    // TODO: Fix cross-version imports in Package generation path
+
     // The test should succeed - if it doesn't, we have a usability regression
+    // NOTE: Cross-version imports in k8s-core generation path still need fixing
     // assert!(success, "Empty k8s objects should be creatable without required field errors");
 }
 
@@ -181,17 +180,13 @@ let k8s = import "examples/pkgs/k8s_io/mod.ncl" in
   },
 }
 "#;
-    
+
     let (success, output) = evaluate_nickel_code(test_code, None);
-    
-    let snapshot_content = format!(
-        "SUCCESS: {}\n\nOUTPUT:\n{}", 
-        success, 
-        output
-    );
-    
+
+    let snapshot_content = format!("SUCCESS: {}\n\nOUTPUT:\n{}", success, output);
+
     assert_snapshot!("practical_k8s_usage", snapshot_content);
-    // TODO: Fix cross-version imports in Package generation path
+    // NOTE: Cross-version imports in k8s-core generation path still need fixing
     // assert!(success, "Practical k8s configurations should evaluate successfully");
 }
 
@@ -238,17 +233,13 @@ let crossplane = import "examples/pkgs/crossplane/mod.ncl" in
   },
 }
 "#;
-    
+
     let (success, output) = evaluate_nickel_code(test_code, None);
-    
-    let snapshot_content = format!(
-        "SUCCESS: {}\n\nOUTPUT:\n{}", 
-        success, 
-        output
-    );
-    
+
+    let snapshot_content = format!("SUCCESS: {}\n\nOUTPUT:\n{}", success, output);
+
     assert_snapshot!("cross_package_imports", snapshot_content);
-    // TODO: Fix cross-version imports in Package generation path
+    // NOTE: Cross-version imports in k8s-core generation path still need fixing
     // assert!(success, "Cross-package imports should work correctly");
 }
 
@@ -302,17 +293,13 @@ let crossplane = import "examples/pkgs/crossplane/mod.ncl" in
   },
 }
 "#;
-    
+
     let (success, output) = evaluate_nickel_code(test_code, None);
-    
-    let snapshot_content = format!(
-        "SUCCESS: {}\n\nOUTPUT:\n{}", 
-        success, 
-        output
-    );
-    
+
+    let snapshot_content = format!("SUCCESS: {}\n\nOUTPUT:\n{}", success, output);
+
     assert_snapshot!("package_structure", snapshot_content);
-    // TODO: Fix cross-version imports in Package generation path
+    // NOTE: Cross-version imports in k8s-core generation path still need fixing
     // assert!(success, "Package structure should be correct and accessible");
 }
 
@@ -380,15 +367,11 @@ let k8s = import "examples/pkgs/k8s_io/mod.ncl" in
   ],
 }
 "#;
-    
+
     let (success, output) = evaluate_nickel_code(test_code, None);
-    
-    let snapshot_content = format!(
-        "SUCCESS: {}\n\nOUTPUT:\n{}", 
-        success, 
-        output
-    );
-    
+
+    let snapshot_content = format!("SUCCESS: {}\n\nOUTPUT:\n{}", success, output);
+
     assert_snapshot!("edge_cases", snapshot_content);
     // Edge cases might not all succeed, but we want to snapshot the behavior
 }
@@ -401,7 +384,7 @@ fn test_generated_package_integration() {
         "test-snapshot-package".to_string(),
         std::path::PathBuf::from("/tmp/test-snapshot"),
     );
-    
+
     // Use a simple CRD for testing
     let test_crd = r#"
 apiVersion: apiextensions.k8s.io/v1
@@ -438,23 +421,24 @@ spec:
     singular: testresource
     kind: TestResource
 "#;
-    
-    let crd: CRD = serde_yaml::from_str(test_crd)
-        .expect("Failed to parse test CRD");
+
+    let crd: CRD = serde_yaml::from_str(test_crd).expect("Failed to parse test CRD");
     generator.add_crd(crd);
-    
-    let package = generator.generate_package()
+
+    let package = generator
+        .generate_package()
         .expect("Failed to generate test package");
-    
+
     // Generate the main module
     let main_module = package.generate_main_module();
-    
+
     // Test that the generated package structure is correct
     assert_snapshot!("generated_test_package", main_module);
-    
+
     // Test that we can generate a specific type
     let version_files = package.generate_version_files("example.com", "v1");
-    let type_content = version_files.get("testresource.ncl")
+    let type_content = version_files
+        .get("testresource.ncl")
         .expect("testresource.ncl should be generated");
     assert_snapshot!("generated_test_type", type_content);
 }

@@ -1,6 +1,5 @@
 //! Import resolution for cross-package type references
 
-
 /// Represents a type reference that needs to be imported
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeReference {
@@ -177,7 +176,6 @@ impl TypeReference {
         )
     }
 }
-
 
 /// Common Kubernetes types that are frequently referenced
 pub fn common_k8s_types() -> Vec<TypeReference> {

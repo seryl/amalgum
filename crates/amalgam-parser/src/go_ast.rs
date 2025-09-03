@@ -85,7 +85,6 @@ impl GoASTParser {
             pb.set_message(format!("Parsing Go repository: {}", repo_url));
             Some(pb)
         } else {
-            println!("Parsing Go repository: {}", repo_url);
             None
         };
 
@@ -105,8 +104,6 @@ impl GoASTParser {
 
         if let Some(pb) = main_spinner {
             pb.finish_with_message(format!("✓ Parsed {} types", self.type_cache.len()));
-        } else {
-            println!("Parsed {} types", self.type_cache.len());
         }
 
         Ok(())
@@ -496,7 +493,10 @@ func isPointerType(expr ast.Expr) bool {
                 Ok(Type::Optional(Box::new(inner)))
             }
             // Handle qualified types (e.g., metav1.ObjectMeta)
-            s => Ok(Type::Reference { name: s.to_string(), module: None }),
+            s => Ok(Type::Reference {
+                name: s.to_string(),
+                module: None,
+            }),
         }
     }
 

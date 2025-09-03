@@ -272,7 +272,10 @@ impl CRDParser {
             })
         } else if go_type.contains("/") {
             // Qualified type name - create reference
-            Ok(Type::Reference { name: go_type.to_string(), module: None })
+            Ok(Type::Reference {
+                name: go_type.to_string(),
+                module: None,
+            })
         } else {
             // Basic types or unqualified names
             match go_type {
@@ -280,7 +283,10 @@ impl CRDParser {
                 "int" | "int32" | "int64" => Ok(Type::Integer),
                 "float32" | "float64" => Ok(Type::Number),
                 "bool" => Ok(Type::Bool),
-                _ => Ok(Type::Reference { name: go_type.to_string(), module: None }),
+                _ => Ok(Type::Reference {
+                    name: go_type.to_string(),
+                    module: None,
+                }),
             }
         }
     }

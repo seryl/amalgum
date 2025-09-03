@@ -6,7 +6,7 @@
 mod fixtures;
 
 use amalgam_codegen::{nickel::NickelCodegen, Codegen};
-use amalgam_parser::{crd::CRDParser, package::PackageGenerator, Parser};
+use amalgam_parser::{crd::CRDParser, package::NamespacedPackage, Parser};
 use fixtures::Fixtures;
 use insta::assert_snapshot;
 
@@ -45,14 +45,11 @@ fn test_snapshot_crd_with_k8s_imports() {
 
     // Get the generated content using the new batch generation
     let version_files = generated_package.generate_version_files("test.io", "v1");
-    let content = version_files
-        .get("simple.ncl")
-        .cloned()
-        .unwrap_or_else(|| {
-            // If no file found, generate from IR directly
-            let mut codegen = NickelCodegen::new();
-            codegen.generate(&ir).expect("Failed to generate")
-        });
+    let content = version_files.get("simple.ncl").cloned().unwrap_or_else(|| {
+        // If no file found, generate from IR directly
+        let mut codegen = NickelCodegen::new();
+        codegen.generate(&ir).expect("Failed to generate")
+    });
 
     // Snapshot should include imports and resolved references
     assert_snapshot!("simple_with_k8s_imports", content);

@@ -9,7 +9,7 @@ use amalgam_codegen::{
     Codegen,
 };
 use amalgam_core::{
-    ir::{Import, Module, TypeDefinition, IR},
+    ir::{Module, TypeDefinition, IR},
     types::Type,
 };
 use std::collections::HashMap;
@@ -204,18 +204,16 @@ impl NamespacedPackage {
     pub fn generate_version_files(&self, group: &str, version: &str) -> HashMap<String, String> {
         tracing::info!("generate_version_files called for {}/{}", group, version);
         let mut files = HashMap::new();
-        
+
         // Get types for this version
         let types = match self.types.get(group).and_then(|v| v.get(version)) {
             Some(types) => types,
             None => return files,
         };
-        
+
         // Step 1: Build type registry using the walker adapter
         let registry = match crate::package_walker::PackageWalkerAdapter::build_registry(
-            types,
-            group,
-            version,
+            types, group, version,
         ) {
             Ok(reg) => reg,
             Err(e) => {
@@ -223,16 +221,13 @@ impl NamespacedPackage {
                 return files;
             }
         };
-        
+
         // Step 2: Build dependency graph
         let deps = crate::package_walker::PackageWalkerAdapter::build_dependencies(&registry);
-        
+
         // Step 3: Generate complete IR with imports
         let ir = match crate::package_walker::PackageWalkerAdapter::generate_ir(
-            registry,
-            deps,
-            group,
-            version,
+            registry, deps, group, version,
         ) {
             Ok(ir) => ir,
             Err(e) => {
@@ -240,34 +235,34 @@ impl NamespacedPackage {
                 return files;
             }
         };
-        
+
         // Step 4: Generate files from IR using codegen
         let mut codegen = amalgam_codegen::nickel::NickelCodegen::new();
-        
+
         // Generate a file for each module in the IR
         for module in &ir.modules {
             // Extract type name from module name (last component)
             let type_name = module.name.rsplit('.').next().unwrap_or(&module.name);
-            
+
             // Create a single-module IR for this type
             let mut single_ir = IR::new();
             single_ir.add_module(module.clone());
-            
+
             // Generate the Nickel code
-            let generated = codegen.generate(&single_ir)
+            let generated = codegen
+                .generate(&single_ir)
                 .unwrap_or_else(|e| format!("# Error generating type: {}\n", e));
-            
+
             files.insert(format!("{}.ncl", type_name), generated);
         }
-        
+
         // Generate mod.ncl for this version
         if let Some(mod_content) = self.generate_version_module(group, version) {
             files.insert("mod.ncl".to_string(), mod_content);
         }
-        
+
         files
     }
-
 
     /// Get all groups in the package
     pub fn groups(&self) -> Vec<String> {
@@ -393,8 +388,7 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
-/// Transform Type::Reference values using the provided mappings
-
+// Transform Type::Reference values using the provided mappings
 // Alias for tests
 #[allow(dead_code)]
 fn capitalize(s: &str) -> String {
@@ -407,9 +401,10 @@ fn needs_k8s_imports(ty: &Type) -> bool {
     // This is a simplified check - would need more sophisticated analysis
     match ty {
         Type::Reference { name, module } => {
-            name.contains("k8s.io") || name.contains("ObjectMeta") ||
-            module.as_ref().map_or(false, |m| m.contains("k8s.io"))
-        },
+            name.contains("k8s.io")
+                || name.contains("ObjectMeta")
+                || module.as_ref().is_some_and(|m| m.contains("k8s.io"))
+        }
         Type::Record { fields, .. } => fields.values().any(|field| needs_k8s_imports(&field.ty)),
         Type::Array(inner) => needs_k8s_imports(inner),
         Type::Optional(inner) => needs_k8s_imports(inner),

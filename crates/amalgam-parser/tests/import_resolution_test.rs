@@ -46,12 +46,18 @@ fn test_k8s_type_reference_detection() {
         match &metadata_field.ty {
             Type::Reference { name, module } => {
                 assert_eq!(name, "ObjectMeta");
-                assert_eq!(module.as_deref(), Some("io.k8s.apimachinery.pkg.apis.meta.v1"));
+                assert_eq!(
+                    module.as_deref(),
+                    Some("io.k8s.apimachinery.pkg.apis.meta.v1")
+                );
             }
             Type::Optional(inner) => {
                 if let Type::Reference { name, module } = &**inner {
                     assert_eq!(name, "ObjectMeta");
-                    assert_eq!(module.as_deref(), Some("io.k8s.apimachinery.pkg.apis.meta.v1"));
+                    assert_eq!(
+                        module.as_deref(),
+                        Some("io.k8s.apimachinery.pkg.apis.meta.v1")
+                    );
                 } else {
                     // For this test, metadata is just an object, not a k8s reference
                     // This is OK - the parser doesn't automatically add k8s references

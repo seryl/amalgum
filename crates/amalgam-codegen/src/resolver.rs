@@ -301,10 +301,6 @@ mod tests {
             &ResolutionContext::default(),
         );
 
-        // Debug: print what we got
-        eprintln!("Crossplane resolution result: '{}'", resolved);
-
-        // For now, accept what the resolver produces
         // The resolver sees "v1" in both the import path and reference, so it matches
         assert!(resolved.ends_with("Composition"));
         assert!(resolved.contains("crossplane"));

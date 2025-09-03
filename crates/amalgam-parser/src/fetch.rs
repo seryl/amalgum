@@ -252,8 +252,6 @@ impl CRDFetcher {
                         Err(e) => {
                             if let Some(ref pb) = individual_pb {
                                 pb.finish_with_message(format!("✗ {} ({})", name, e));
-                            } else {
-                                eprintln!("Failed to parse {}: {}", name, e);
                             }
                             None
                         }

@@ -346,7 +346,9 @@ impl Manifest {
 
         // Use the existing URL import functionality
         use amalgam_parser::fetch::CRDFetcher;
-        use amalgam_parser::package::PackageGenerator;
+        use amalgam_parser::package::NamespacedPackage;
+        use amalgam_parser::crd::CRDParser;
+        use amalgam_parser::Parser as SchemaParser;
 
         let fetcher = CRDFetcher::new()?;
         let crds = fetcher.fetch_from_url(&fetch_url).await?;
@@ -354,42 +356,96 @@ impl Manifest {
 
         info!("Found {} CRDs", crds.len());
 
-        // Generate package structure
-        let mut generator = PackageGenerator::new(package.name.clone(), output.to_path_buf());
-        generator.add_crds(crds);
-
-        let package_structure = generator.generate_package()?;
-
+        // Use unified pipeline with NamespacedPackage
+        let mut packages_by_group: std::collections::HashMap<String, NamespacedPackage> = std::collections::HashMap::new();
+        
+        for crd in crds {
+            let group = crd.spec.group.clone();
+            
+            // Get or create package for this group
+            let package = packages_by_group.entry(group.clone())
+                .or_insert_with(|| NamespacedPackage::new(group.clone()));
+            
+            // Parse CRD to get types
+            let parser = CRDParser::new();
+            let temp_ir = parser.parse(crd.clone())?;
+            
+            // Add types from the parsed IR to the package
+            for module in &temp_ir.modules {
+                for type_def in &module.types {
+                    // Extract version from module name
+                    let parts: Vec<&str> = module.name.split('.').collect();
+                    let version = if parts.len() > 2 {
+                        parts[parts.len() - 2]
+                    } else {
+                        "v1"
+                    };
+                    
+                    package.add_type(
+                        group.clone(),
+                        version.to_string(),
+                        type_def.name.clone(),
+                        type_def.clone(),
+                    );
+                }
+            }
+        }
+        
         // Create output directory structure
         fs::create_dir_all(output)?;
-
-        // Write main module file
-        let main_module = package_structure.generate_main_module();
-        fs::write(output.join("mod.ncl"), main_module)?;
-
-        // Generate group/version/kind structure
-        for group in package_structure.groups() {
+        
+        // Generate files for each group using unified pipeline
+        let mut all_groups = Vec::new();
+        for (group, package) in packages_by_group {
+            all_groups.push(group.clone());
             let group_dir = output.join(&group);
             fs::create_dir_all(&group_dir)?;
-
-            if let Some(group_mod) = package_structure.generate_group_module(&group) {
-                fs::write(group_dir.join("mod.ncl"), group_mod)?;
-            }
-
-            for version in package_structure.versions(&group) {
+            
+            // Get all versions for this group
+            let versions = package.versions(&group);
+            
+            // Generate version directories and files
+            let mut version_modules = Vec::new();
+            for version in versions {
                 let version_dir = group_dir.join(&version);
                 fs::create_dir_all(&version_dir)?;
-
-                // Generate all files for this version using batch generation
-                // This ensures proper cross-version imports are generated
-                let version_files = package_structure.generate_version_files(&group, &version);
+                
+                // Generate all files for this version using unified pipeline
+                let version_files = package.generate_version_files(&group, &version);
                 
                 // Write all generated files
                 for (filename, content) in version_files {
                     fs::write(version_dir.join(&filename), content)?;
                 }
+                
+                version_modules.push(format!("  {} = import \"./{}/mod.ncl\",", version, version));
+            }
+            
+            // Write group module
+            if !version_modules.is_empty() {
+                let group_mod = format!(
+                    "# Module: {}\n# Generated with unified pipeline\n\n{{\n{}\n}}\n",
+                    group,
+                    version_modules.join("\n")
+                );
+                fs::write(group_dir.join("mod.ncl"), group_mod)?;
             }
         }
+        
+        // Write main module file
+        let group_imports: Vec<String> = all_groups.iter()
+            .map(|g| {
+                let sanitized = g.replace(['.', '-'], "_");
+                format!("  {} = import \"./{}/mod.ncl\",", sanitized, g)
+            })
+            .collect();
+            
+        let main_module = format!(
+            "# Package: {}\n# Generated with unified pipeline from manifest\n\n{{\n{}\n}}\n",
+            package.name,
+            group_imports.join("\n")
+        );
+        fs::write(output.join("mod.ncl"), main_module)?;
 
         Ok(output.to_path_buf())
     }

@@ -8,6 +8,7 @@ use amalgam_codegen::{go::GoCodegen, nickel::NickelCodegen, Codegen};
 use amalgam_parser::{
     crd::{CRDParser, CRD},
     openapi::OpenAPIParser,
+    walkers::SchemaWalker,
     Parser as SchemaParser,
 };
 
@@ -263,7 +264,7 @@ async fn handle_import(source: ImportSource) -> Result<()> {
             output,
             package,
             nickel_package,
-            package_base,
+            package_base: _,
         } => {
             info!("Fetching CRDs from URL: {}", url);
 
@@ -284,64 +285,114 @@ async fn handle_import(source: ImportSource) -> Result<()> {
 
             info!("Found {} CRDs", crds.len());
 
-            // Generate package structure
-            let mut generator = amalgam_parser::package::PackageGenerator::new(
-                package_name.clone(),
-                output.clone(),
-            );
-            generator.add_crds(crds);
-
-            let package_structure = generator.generate_package()?;
-
+            // Use unified pipeline with NamespacedPackage
+            // Parse all CRDs and organize by group
+            let mut packages_by_group: std::collections::HashMap<String, amalgam_parser::package::NamespacedPackage> = std::collections::HashMap::new();
+            
+            for crd in crds {
+                let group = crd.spec.group.clone();
+                
+                // Get or create package for this group
+                let package = packages_by_group.entry(group.clone())
+                    .or_insert_with(|| amalgam_parser::package::NamespacedPackage::new(group.clone()));
+                
+                // Parse CRD to get types
+                let parser = CRDParser::new();
+                let temp_ir = parser.parse(crd.clone())?;
+                
+                // Add types from the parsed IR to the package
+                for module in &temp_ir.modules {
+                    for type_def in &module.types {
+                        // Extract version from module name
+                        let parts: Vec<&str> = module.name.split('.').collect();
+                        let version = if parts.len() > 2 {
+                            parts[parts.len() - 2]
+                        } else {
+                            "v1"
+                        };
+                        
+                        package.add_type(
+                            group.clone(),
+                            version.to_string(),
+                            type_def.name.clone(),
+                            type_def.clone(),
+                        );
+                    }
+                }
+            }
+            
             // Create output directory structure
             fs::create_dir_all(&output)?;
-
-            // Write main module file
-            let main_module = package_structure.generate_main_module();
-            fs::write(output.join("mod.ncl"), main_module)?;
-
-            // Create group/version/kind structure
-            for group in package_structure.groups() {
+            
+            // Generate files for each group using unified pipeline
+            let mut all_groups = Vec::new();
+            for (group, package) in packages_by_group {
+                all_groups.push(group.clone());
                 let group_dir = output.join(&group);
                 fs::create_dir_all(&group_dir)?;
-
-                // Write group module
-                if let Some(group_mod) = package_structure.generate_group_module(&group) {
-                    fs::write(group_dir.join("mod.ncl"), group_mod)?;
-                }
-
-                // Create version directories
-                for version in package_structure.versions(&group) {
+                
+                // Get all versions for this group
+                let versions = package.versions(&group);
+                
+                // Generate version directories and files
+                let mut version_modules = Vec::new();
+                for version in versions {
                     let version_dir = group_dir.join(&version);
                     fs::create_dir_all(&version_dir)?;
-
-                    // Generate all files for this version using batch generation
-                    // This ensures proper cross-version imports are generated
-                    let version_files = package_structure.generate_version_files(&group, &version);
+                    
+                    // Generate all files for this version using unified pipeline
+                    let version_files = package.generate_version_files(&group, &version);
                     
                     // Write all generated files
                     for (filename, content) in version_files {
                         fs::write(version_dir.join(&filename), content)?;
                     }
+                    
+                    version_modules.push(format!("  {} = import \"./{}/mod.ncl\",", version, version));
+                }
+                
+                // Write group module
+                if !version_modules.is_empty() {
+                    let group_mod = format!(
+                        "# Module: {}\n# Generated with unified pipeline\n\n{{\n{}\n}}\n",
+                        group,
+                        version_modules.join("\n")
+                    );
+                    fs::write(group_dir.join("mod.ncl"), group_mod)?;
                 }
             }
-
+            
+            // Write main module file
+            let group_imports: Vec<String> = all_groups.iter()
+                .map(|g| {
+                    let sanitized = g.replace(['.', '-'], "_");
+                    format!("  {} = import \"./{}/mod.ncl\",", sanitized, g)
+                })
+                .collect();
+                
+            let main_module = format!(
+                "# Package: {}\n# Generated with unified pipeline\n\n{{\n{}\n}}\n",
+                package_name,
+                group_imports.join("\n")
+            );
+            fs::write(output.join("mod.ncl"), main_module)?;
+            
             // Generate Nickel package manifest if requested
             if nickel_package {
                 info!("Generating Nickel package manifest (experimental)");
-                let manifest = package_structure.generate_nickel_manifest(None);
+                // TODO: Implement Nickel manifest generation with unified pipeline
+                let manifest = format!(
+                    "# Nickel package manifest for {}\n# Generated with unified pipeline\n\n{{\n  name = \"{}\",\n  version = \"0.1.0\",\n}}\n",
+                    package_name, package_name
+                );
                 fs::write(output.join("Nickel-pkg.ncl"), manifest)?;
                 info!("✓ Generated Nickel-pkg.ncl");
             }
-
-            info!("Generated package '{}' in {:?}", package_name, output);
+            
+            info!("Generated package '{}' in {:?} using unified pipeline", package_name, output);
             info!("Package structure:");
-            for group in package_structure.groups() {
+            for group in &all_groups {
                 info!("  {}/", group);
-                for version in package_structure.versions(&group) {
-                    let kinds = package_structure.kinds(&group, &version);
-                    info!("    {}/: {} types", version, kinds.len());
-                }
             }
             if nickel_package {
                 info!("  Nickel-pkg.ncl (package manifest)");
@@ -366,59 +417,66 @@ async fn handle_import(source: ImportSource) -> Result<()> {
                 serde_yaml::from_str(&content)?
             };
 
+            // Use the unified pipeline through NamespacedPackage
+            let mut package =
+                amalgam_parser::package::NamespacedPackage::new(crd.spec.group.clone());
+
+            // Parse CRD to get type definition
             let parser = CRDParser::new();
-            let mut ir = parser.parse(crd.clone())?;
+            let temp_ir = parser.parse(crd.clone())?;
 
-            // Note: Import resolution is now handled by the walker pattern
-            // The CRDParser already adds necessary imports during IR generation
+            // Add types from the parsed IR to the package
+            for module in &temp_ir.modules {
+                for type_def in &module.types {
+                    // Extract version from module name
+                    let parts: Vec<&str> = module.name.split('.').collect();
+                    let version = if parts.len() > 1 {
+                        parts[parts.len() - 2]
+                    } else {
+                        "v1"
+                    };
 
-
-            // Generate Nickel code with package mode support
-            let mut codegen = if package_mode {
-                use amalgam_codegen::package_mode::PackageMode;
-                use std::path::PathBuf;
-
-                // Look for manifest in current directory first, then fallback locations
-                let manifest_path = if PathBuf::from(".amalgam-manifest.toml").exists() {
-                    PathBuf::from(".amalgam-manifest.toml")
-                } else if PathBuf::from("amalgam-manifest.toml").exists() {
-                    PathBuf::from("amalgam-manifest.toml")
-                } else {
-                    PathBuf::from("does-not-exist")
-                };
-
-                let manifest = if manifest_path.exists() {
-                    Some(&manifest_path)
-                } else {
-                    None
-                };
-
-                // Create analyzer-based package mode
-                let mut package_mode = PackageMode::new_with_analyzer(manifest);
-
-                // Analyze the IR to detect dependencies automatically
-                // Extract the package name from the CRD group
-                let package_name = crd.spec.group.split('.').next().unwrap_or("unknown");
-                let mut all_types: Vec<amalgam_core::types::Type> = Vec::new();
-                for module in &ir.modules {
-                    for type_def in &module.types {
-                        all_types.push(type_def.ty.clone());
-                    }
+                    package.add_type(
+                        crd.spec.group.clone(),
+                        version.to_string(),
+                        type_def.name.clone(),
+                        type_def.clone(),
+                    );
                 }
-                package_mode.analyze_and_update_dependencies(&all_types, package_name);
+            }
 
-                NickelCodegen::new().with_package_mode(package_mode)
+            // Generate using unified pipeline
+            let version = crd
+                .spec
+                .versions
+                .first()
+                .map(|v| v.name.clone())
+                .unwrap_or_else(|| "v1".to_string());
+
+            let files = package.generate_version_files(&crd.spec.group, &version);
+
+            // For single file output, just get the first generated file
+            let code = files
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "# No types generated\n".to_string());
+
+            // Apply package mode transformation if requested
+            let final_code = if package_mode {
+                // Transform relative imports to package imports
+                // This is a post-processing step on the generated code
+                transform_imports_to_package_mode(&code, &crd.spec.group)
             } else {
-                NickelCodegen::new()
+                code.clone()
             };
-            let code = codegen.generate(&ir)?;
 
             if let Some(output_path) = output {
-                fs::write(&output_path, code)
+                fs::write(&output_path, &final_code)
                     .with_context(|| format!("Failed to write output: {:?}", output_path))?;
                 info!("Generated Nickel code written to {:?}", output_path);
             } else {
-                println!("{}", code);
+                println!("{}", final_code);
             }
 
             Ok(())
@@ -436,19 +494,46 @@ async fn handle_import(source: ImportSource) -> Result<()> {
                 serde_yaml::from_str(&content)?
             };
 
-            let parser = OpenAPIParser::new();
-            let mut ir = parser.parse(spec)?;
+            // Use the unified pipeline through NamespacedPackage
+            // Extract namespace from filename or use default
+            let namespace = file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("openapi")
+                .to_string();
 
-            // Note: Import resolution is now handled by the walker pattern
-            // The CRDParser already adds necessary imports during IR generation
+            let mut package = amalgam_parser::package::NamespacedPackage::new(namespace.clone());
 
+            // Parse using walker pattern
+            let walker = amalgam_parser::walkers::openapi::OpenAPIWalker::new(&namespace);
+            let ir = walker.walk(spec)?;
 
-            // Generate Nickel code by default
-            let mut codegen = NickelCodegen::new();
-            let code = codegen.generate(&ir)?;
+            // Add all types to the package from the generated IR
+            for module in &ir.modules {
+                for type_def in &module.types {
+                    // Extract version from module name if present
+                    let parts: Vec<&str> = module.name.split('.').collect();
+                    let version = if parts.len() > 1 {
+                        parts.last().unwrap().to_string()
+                    } else {
+                        "v1".to_string() // Default version
+                    };
+
+                    package.add_type(
+                        namespace.clone(),
+                        version.clone(),
+                        type_def.name.clone(),
+                        type_def.clone(),
+                    );
+                }
+            }
+
+            // Generate files using the unified pipeline
+            let files = package.generate_version_files(&namespace, "v1");
+            let code = files.values().next().unwrap_or(&String::new()).clone();
 
             if let Some(output_path) = output {
-                fs::write(&output_path, code)
+                fs::write(&output_path, &code)
                     .with_context(|| format!("Failed to write output: {:?}", output_path))?;
                 info!("Generated Nickel code written to {:?}", output_path);
             } else {
@@ -463,7 +548,7 @@ async fn handle_import(source: ImportSource) -> Result<()> {
             output,
             types: _,
             nickel_package,
-            package_base,
+            package_base: _,
         } => {
             handle_k8s_core_import(&version, &output, nickel_package).await?;
             Ok(())
@@ -596,4 +681,63 @@ fn handle_convert(input: PathBuf, from: &str, output: PathBuf, to: &str) -> Resu
 
     info!("Conversion complete. Output written to {:?}", output);
     Ok(())
+}
+
+/// Transform relative imports in generated code to package imports
+/// This is used when --package-mode is enabled
+fn transform_imports_to_package_mode(code: &str, group: &str) -> String {
+    // Determine the base package ID based on the group
+    let package_id = if group.starts_with("k8s.io") || group.contains("k8s.io") {
+        "github:seryl/nickel-pkgs/k8s-io"
+    } else if group.contains("crossplane") {
+        "github:seryl/nickel-pkgs/crossplane"
+    } else {
+        // For unknown groups, keep relative imports
+        return code.to_string();
+    };
+    
+    // Transform import statements from relative to package imports
+    let mut result = String::new();
+    for line in code.lines() {
+        if line.contains("import") && line.contains("../") {
+            // Extract the module path from the import
+            if let Some(start) = line.find('"') {
+                if let Some(end) = line.rfind('"') {
+                    let import_path = &line[start + 1..end];
+                    // Count the number of ../ to determine depth
+                    let depth = import_path.matches("../").count();
+                    
+                    // Extract the module name (last part of the path)
+                    let module_parts: Vec<&str> = import_path.split('/').collect();
+                    let module_name = module_parts.last()
+                        .and_then(|s| s.strip_suffix(".ncl"))
+                        .unwrap_or("");
+                    
+                    // Construct package import
+                    if depth >= 2 && module_name != "mod" {
+                        // This looks like a cross-version import
+                        let new_line = format!(
+                            "{}import \"{}#/{}\".{}",
+                            &line[..start],
+                            package_id,
+                            module_name,
+                            &line[end + 1..]
+                        );
+                        result.push_str(&new_line);
+                        result.push('\n');
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    
+    // Remove trailing newline if original didn't have one
+    if !code.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+    
+    result
 }
