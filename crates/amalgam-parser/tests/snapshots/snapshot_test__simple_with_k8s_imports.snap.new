@@ -1,0 +1,15 @@
+---
+source: crates/amalgam-parser/tests/snapshot_test.rs
+assertion_line: 63
+expression: content
+---
+# Module: Simple.v1.test.io
+
+{
+  Simple = {
+    metadata | optional | ObjectMeta,
+    spec | optional | {
+      name | optional | String,
+    },
+  },
+}

@@ -32,16 +32,24 @@ fn test_snapshot_crd_with_k8s_imports() {
     let parser = CRDParser::new();
     let ir = parser.parse(crd.clone()).expect("Failed to parse CRD");
 
-    // Use PackageGenerator to handle imports
-    let mut package = PackageGenerator::new(
-        "test-package".to_string(),
-        std::path::PathBuf::from("/tmp/test"),
-    );
-    package.add_crd(crd);
+    // Use NamespacedPackage to handle imports (unified pipeline)
+    let mut package = NamespacedPackage::new("test-package".to_string());
+    
+    // Add types from the parsed IR to the package
+    for module in &ir.modules {
+        for type_def in &module.types {
+            // Extract version from module name
+            let version = module.name.rsplit('.').next().unwrap_or("v1");
+            package.add_type(
+                crd.spec.group.clone(),
+                version.to_string(),
+                type_def.name.to_lowercase(),
+                type_def.clone()
+            );
+        }
+    }
 
-    let generated_package = package
-        .generate_package()
-        .expect("Failed to generate package");
+    let generated_package = package;
 
     // Get the generated content using the new batch generation
     let version_files = generated_package.generate_version_files("test.io", "v1");
@@ -131,20 +139,33 @@ fn test_snapshot_ir_structure() {
 
 #[test]
 fn test_snapshot_package_structure() {
-    let mut package = PackageGenerator::new(
-        "test-package".to_string(),
-        std::path::PathBuf::from("/tmp/test"),
-    );
+    let mut package = NamespacedPackage::new("test-package".to_string());
 
-    // Add multiple CRDs
-    package.add_crd(Fixtures::simple_with_metadata());
-    package.add_crd(Fixtures::with_arrays());
-    package.add_crd(Fixtures::multi_version());
+    // Add multiple CRDs using the unified pipeline
+    for crd in [
+        Fixtures::simple_with_metadata(),
+        Fixtures::with_arrays(), 
+        Fixtures::multi_version()
+    ] {
+        let parser = CRDParser::new();
+        let ir = parser.parse(crd.clone()).expect("Failed to parse CRD");
+        
+        // Add types from the parsed IR to the package
+        for module in &ir.modules {
+            for type_def in &module.types {
+                // Extract version from module name (e.g., "apiextensions.crossplane.io.v1" -> "v1")
+                let version = module.name.rsplit('.').next().unwrap_or("v1");
+                package.add_type(
+                    crd.spec.group.clone(),
+                    version.to_string(),
+                    type_def.name.to_lowercase(),
+                    type_def.clone()
+                );
+            }
+        }
+    }
 
-    // Generate the package
-    let ns_package = package
-        .generate_package()
-        .expect("Failed to generate package");
+    let ns_package = package;
 
     // Get the main module to see structure
     let main_module = ns_package.generate_main_module();

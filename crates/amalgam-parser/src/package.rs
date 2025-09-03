@@ -365,7 +365,7 @@ impl NamespacedPackage {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn sanitize_name(name: &str) -> String {
     name.replace(['-', '.'], "_")
         .to_lowercase()
@@ -390,12 +390,11 @@ fn capitalize_first(s: &str) -> String {
 
 // Transform Type::Reference values using the provided mappings
 // Alias for tests
-#[allow(dead_code)]
+#[cfg(test)]
 fn capitalize(s: &str) -> String {
     capitalize_first(s)
 }
 
-#[allow(dead_code)]
 fn needs_k8s_imports(ty: &Type) -> bool {
     // Check if the type references k8s.io types
     // This is a simplified check - would need more sophisticated analysis
