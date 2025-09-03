@@ -93,7 +93,7 @@ impl GoParser {
                 "byte" => Ok(Type::Integer), // byte is alias for uint8
                 "rune" => Ok(Type::Integer), // rune is alias for int32
                 "interface{}" | "any" => Ok(Type::Any),
-                _ => Ok(Type::Reference(name.clone())),
+                _ => Ok(Type::Reference { name: name.clone(), module: None }),
             },
             GoType::Struct { fields } => {
                 let mut record_fields = BTreeMap::new();

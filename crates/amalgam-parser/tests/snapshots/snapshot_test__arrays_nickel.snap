@@ -1,13 +1,12 @@
 ---
 source: crates/amalgam-parser/tests/snapshot_test.rs
-assertion_line: 92
 expression: content
 ---
 # Module: Arrays.v1.test.io
 
 {
   Arrays = {
-    metadata | optional | io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta,
+    metadata | optional | ObjectMeta,
     spec | optional | {
       configs | optional | Array {
         name | optional | String,

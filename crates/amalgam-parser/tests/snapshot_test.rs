@@ -43,9 +43,11 @@ fn test_snapshot_crd_with_k8s_imports() {
         .generate_package()
         .expect("Failed to generate package");
 
-    // Get the specific kind file content
-    let content = generated_package
-        .generate_kind_file("test.io", "v1", "simple")
+    // Get the generated content using the new batch generation
+    let version_files = generated_package.generate_version_files("test.io", "v1");
+    let content = version_files
+        .get("simple.ncl")
+        .cloned()
         .unwrap_or_else(|| {
             // If no file found, generate from IR directly
             let mut codegen = NickelCodegen::new();

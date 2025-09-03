@@ -7,12 +7,15 @@ use amalgam_core::{
     types::{Field, Type},
     IR,
 };
+use std::collections::HashSet;
 use std::fmt::Write;
 
 pub struct NickelCodegen {
     indent_size: usize,
     resolver: TypeResolver,
     package_mode: PackageMode,
+    /// Track cross-module imports needed for the current module
+    current_imports: HashSet<(String, String)>, // (version, type_name)
 }
 
 impl NickelCodegen {
@@ -21,6 +24,7 @@ impl NickelCodegen {
             indent_size: 2,
             resolver: TypeResolver::new(),
             package_mode: PackageMode::default(),
+            current_imports: HashSet::new(),
         }
     }
 
@@ -140,12 +144,30 @@ impl NickelCodegen {
                 Ok(result)
             }
 
-            Type::Union(types) => {
-                let type_strs: Result<Vec<_>, _> = types
-                    .iter()
-                    .map(|t| self.type_to_nickel(t, module, indent_level))
-                    .collect();
-                Ok(type_strs?.join(" | "))
+            Type::Union { types, coercion_hint } => {
+                // Handle union types based on coercion hint
+                match coercion_hint {
+                    Some(amalgam_core::types::UnionCoercion::PreferString) => {
+                        // For types that should be coerced to string (like IntOrString)
+                        Ok("String".to_string())
+                    },
+                    Some(amalgam_core::types::UnionCoercion::PreferNumber) => {
+                        // For types that should be coerced to number
+                        Ok("Number".to_string())
+                    },
+                    Some(amalgam_core::types::UnionCoercion::Custom(handler)) => {
+                        // Custom handler - could be a Nickel contract
+                        Ok(handler.clone())
+                    },
+                    Some(amalgam_core::types::UnionCoercion::NoPreference) | None => {
+                        // Generate actual union type
+                        let type_strs: Result<Vec<_>, _> = types
+                            .iter()
+                            .map(|t| self.type_to_nickel(t, module, indent_level))
+                            .collect();
+                        Ok(type_strs?.join(" | "))
+                    }
+                }
             }
 
             Type::TaggedUnion {
@@ -160,10 +182,37 @@ impl NickelCodegen {
                 Ok(contracts.join(" | "))
             }
 
-            Type::Reference(name) => {
-                // Use the resolver to get the proper reference
+            Type::Reference { name, module: ref_module } => {
+                // If we have module information, this is a cross-module reference
+                if let Some(ref_module) = ref_module {
+                    // Check if this is a cross-version reference within k8s
+                    if ref_module.contains("io.k8s.") && module.name.contains("io.k8s.") {
+                        // Extract version from module paths
+                        let ref_parts: Vec<&str> = ref_module.split('.').collect();
+                        let current_parts: Vec<&str> = module.name.split('.').collect();
+                        
+                        // Check if they're in the same API group but different versions
+                        if ref_parts.len() > 2 && current_parts.len() > 2 {
+                            let ref_version = ref_parts[ref_parts.len() - 1];
+                            let current_version = current_parts[current_parts.len() - 1];
+                            
+                            // If different versions, need to import
+                            if ref_version != current_version {
+                                // Track this import need
+                                let snake_name = name.to_lowercase();
+                                self.current_imports.insert((ref_version.to_string(), snake_name.clone()));
+                                
+                                // Return the reference with the import prefix
+                                let import_alias = format!("{}_{}", ref_version, snake_name);
+                                return Ok(format!("{}.{}", import_alias, name));
+                            }
+                        }
+                    }
+                }
+                
+                // Use the resolver for same-module references
                 let context = ResolutionContext {
-                    current_group: None, // Could extract from module.name if needed
+                    current_group: None,
                     current_version: None,
                     current_kind: None,
                 };
@@ -272,12 +321,36 @@ impl Codegen for NickelCodegen {
         let mut output = String::new();
 
         for module in &ir.modules {
+            // Clear imports for this module
+            self.current_imports.clear();
+            
+            // First pass: collect all type definitions to detect cross-module imports
+            let mut type_strings = Vec::new();
+            for type_def in &module.types {
+                let type_str = self.type_to_nickel(&type_def.ty, module, 1)?;
+                type_strings.push((type_def.clone(), type_str));
+            }
+            
             // Module header comment
             writeln!(output, "# Module: {}", module.name)
                 .map_err(|e| CodegenError::Generation(e.to_string()))?;
             writeln!(output).map_err(|e| CodegenError::Generation(e.to_string()))?;
 
-            // Generate imports if any
+            // Generate cross-module imports that were discovered
+            if !self.current_imports.is_empty() {
+                let mut imports: Vec<_> = self.current_imports.iter().collect();
+                imports.sort_by_key(|(ver, name)| (ver.clone(), name.clone()));
+                
+                for (version, type_name) in imports {
+                    let import_alias = format!("{}_{}", version, type_name);
+                    writeln!(output, "let {} = import \"../{}/{}\" in", 
+                        import_alias, version, type_name)
+                        .map_err(|e| CodegenError::Generation(e.to_string()))?;
+                }
+                writeln!(output).map_err(|e| CodegenError::Generation(e.to_string()))?;
+            }
+            
+            // Generate original imports if any
             if !module.imports.is_empty() {
                 for import in &module.imports {
                     // Convert import path based on package mode
@@ -318,6 +391,8 @@ impl Codegen for NickelCodegen {
             writeln!(output, "{{")?;
 
             for (idx, type_def) in module.types.iter().enumerate() {
+                // Generate the type string
+                let type_str = self.type_to_nickel(&type_def.ty, module, 1)?;
                 // Add type documentation as a comment if present
                 if let Some(doc) = &type_def.documentation {
                     for line in doc.lines() {
@@ -325,9 +400,6 @@ impl Codegen for NickelCodegen {
                             .map_err(|e| CodegenError::Generation(e.to_string()))?;
                     }
                 }
-
-                // Generate the type with proper indentation
-                let type_str = self.type_to_nickel(&type_def.ty, module, 1)?;
 
                 // Check if type is a record that needs special formatting
                 if matches!(type_def.ty, Type::Record { .. }) {

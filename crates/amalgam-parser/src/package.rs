@@ -2,7 +2,6 @@
 
 use crate::{
     crd::{CRDParser, CRD},
-    imports::{ImportResolver, TypeReference},
     ParserError,
 };
 use amalgam_codegen::{
@@ -200,151 +199,75 @@ impl NamespacedPackage {
         })
     }
 
-    /// Generate a kind-specific file
-    pub fn generate_kind_file(&self, group: &str, version: &str, kind: &str) -> Option<String> {
-        self.types.get(group).and_then(|versions| {
-            versions.get(version).and_then(|kinds| {
-                kinds.get(kind).map(|type_def| {
-                    // Use the nickel codegen to generate the type
-                    let mut ir = IR::new();
-                    let mut module = Module {
-                        name: format!("{}.{}", kind, group),
-                        imports: Vec::new(),
-                        types: vec![type_def.clone()],
-                        constants: Vec::new(),
-                        metadata: Default::default(),
-                    };
-
-                    // Analyze the type for external references and add imports
-                    let mut import_resolver = ImportResolver::new();
-                    import_resolver.analyze_type(&type_def.ty);
-
-                    // Build a mapping from full qualified names to alias.TypeName
-                    let mut reference_mappings: HashMap<String, String> = HashMap::new();
-
-                    // Group references by their import path to avoid duplicates
-                    let mut imports_by_path: HashMap<String, Vec<TypeReference>> = HashMap::new();
-
-                    for type_ref in import_resolver.references() {
-                        let import_path = type_ref.import_path(group, version);
-                        imports_by_path
-                            .entry(import_path)
-                            .or_default()
-                            .push(type_ref.clone());
-                    }
-
-                    // Generate a single import for each unique path and build mappings
-                    for (import_path, type_refs) in imports_by_path {
-                        // Generate a proper alias for this import
-                        let alias = if import_path.contains("k8s_io") {
-                            // For k8s types, extract the filename as the basis for the alias
-                            let filename = import_path
-                                .trim_end_matches(".ncl")
-                                .split('/')
-                                .next_back()
-                                .unwrap_or("unknown");
-                            format!("k8s_io_{}", filename)
-                        } else {
-                            format!("import_{}", module.imports.len())
-                        };
-
-                        // Create mappings for all types from this import
-                        for type_ref in &type_refs {
-                            // Build the full qualified name that appears in Type::Reference
-                            let full_name = if type_ref.group == "k8s.io" {
-                                // For k8s types, construct the full io.k8s... name
-                                if type_ref.kind == "ObjectMeta" || type_ref.kind == "ListMeta" {
-                                    format!(
-                                        "io.k8s.apimachinery.pkg.apis.meta.{}.{}",
-                                        type_ref.version, type_ref.kind
-                                    )
-                                } else {
-                                    format!(
-                                        "io.k8s.api.core.{}.{}",
-                                        type_ref.version, type_ref.kind
-                                    )
-                                }
-                            } else {
-                                // For other types, use a simpler format
-                                format!("{}/{}.{}", type_ref.group, type_ref.version, type_ref.kind)
-                            };
-
-                            // Map to alias.TypeName
-                            let mapped_name = format!("{}.{}", alias, type_ref.kind);
-                            reference_mappings.insert(full_name, mapped_name);
-                        }
-
-                        tracing::debug!(
-                            "Adding import: path={}, alias={}, types={:?}",
-                            import_path,
-                            alias,
-                            type_refs.iter().map(|t| &t.kind).collect::<Vec<_>>()
-                        );
-
-                        module.imports.push(Import {
-                            path: import_path,
-                            alias: Some(alias),
-                            items: vec![], // Empty items means import the whole module
-                        });
-                    }
-
-                    // Transform the type definition to use the mapped references
-                    let mut transformed_type_def = type_def.clone();
-                    transform_type_references(&mut transformed_type_def.ty, &reference_mappings);
-
-                    // Use the transformed type definition
-                    module.types = vec![transformed_type_def];
-
-                    tracing::debug!(
-                        "Module {} has {} imports",
-                        module.name,
-                        module.imports.len()
-                    );
-                    ir.add_module(module);
-
-                    // Generate the Nickel code with package mode
-                    use amalgam_codegen::package_mode::PackageMode;
-                    use std::path::PathBuf;
-
-                    // Use analyzer-based package mode for automatic dependency detection
-                    let manifest_path = PathBuf::from(".amalgam-manifest.toml");
-                    let manifest = if manifest_path.exists() {
-                        Some(&manifest_path)
-                    } else {
-                        None
-                    };
-
-                    let mut package_mode = PackageMode::new_with_analyzer(manifest);
-
-                    // Analyze types to detect dependencies
-                    let mut all_types: Vec<amalgam_core::types::Type> = Vec::new();
-                    for module in &ir.modules {
-                        for type_def in &module.types {
-                            all_types.push(type_def.ty.clone());
-                        }
-                    }
-                    package_mode.analyze_and_update_dependencies(&all_types, group);
-
-                    let mut codegen = amalgam_codegen::nickel::NickelCodegen::new()
-                        .with_package_mode(package_mode);
-                    let mut generated = codegen
-                        .generate(&ir)
-                        .unwrap_or_else(|e| format!("# Error generating type: {}\n", e));
-
-                    // For k8s.io packages, check for missing internal imports
-                    if group == "k8s.io" || group.starts_with("io.k8s") {
-                        use crate::k8s_imports::{find_k8s_type_references, fix_k8s_imports};
-                        let type_refs = find_k8s_type_references(&type_def.ty);
-                        if !type_refs.is_empty() {
-                            generated = fix_k8s_imports(&generated, &type_refs, version);
-                        }
-                    }
-
-                    generated
-                })
-            })
-        })
+    /// Generate all files for a version using unified IR pipeline with walkers
+    #[tracing::instrument(skip(self), fields(group = %group, version = %version))]
+    pub fn generate_version_files(&self, group: &str, version: &str) -> HashMap<String, String> {
+        tracing::info!("generate_version_files called for {}/{}", group, version);
+        let mut files = HashMap::new();
+        
+        // Get types for this version
+        let types = match self.types.get(group).and_then(|v| v.get(version)) {
+            Some(types) => types,
+            None => return files,
+        };
+        
+        // Step 1: Build type registry using the walker adapter
+        let registry = match crate::package_walker::PackageWalkerAdapter::build_registry(
+            types,
+            group,
+            version,
+        ) {
+            Ok(reg) => reg,
+            Err(e) => {
+                tracing::error!("Failed to build type registry: {}", e);
+                return files;
+            }
+        };
+        
+        // Step 2: Build dependency graph
+        let deps = crate::package_walker::PackageWalkerAdapter::build_dependencies(&registry);
+        
+        // Step 3: Generate complete IR with imports
+        let ir = match crate::package_walker::PackageWalkerAdapter::generate_ir(
+            registry,
+            deps,
+            group,
+            version,
+        ) {
+            Ok(ir) => ir,
+            Err(e) => {
+                tracing::error!("Failed to generate IR: {}", e);
+                return files;
+            }
+        };
+        
+        // Step 4: Generate files from IR using codegen
+        let mut codegen = amalgam_codegen::nickel::NickelCodegen::new();
+        
+        // Generate a file for each module in the IR
+        for module in &ir.modules {
+            // Extract type name from module name (last component)
+            let type_name = module.name.rsplit('.').next().unwrap_or(&module.name);
+            
+            // Create a single-module IR for this type
+            let mut single_ir = IR::new();
+            single_ir.add_module(module.clone());
+            
+            // Generate the Nickel code
+            let generated = codegen.generate(&single_ir)
+                .unwrap_or_else(|e| format!("# Error generating type: {}\n", e));
+            
+            files.insert(format!("{}.ncl", type_name), generated);
+        }
+        
+        // Generate mod.ncl for this version
+        if let Some(mod_content) = self.generate_version_module(group, version) {
+            files.insert("mod.ncl".to_string(), mod_content);
+        }
+        
+        files
     }
+
 
     /// Get all groups in the package
     pub fn groups(&self) -> Vec<String> {
@@ -471,35 +394,6 @@ fn capitalize_first(s: &str) -> String {
 }
 
 /// Transform Type::Reference values using the provided mappings
-fn transform_type_references(ty: &mut Type, mappings: &HashMap<String, String>) {
-    match ty {
-        Type::Reference(name) => {
-            // Check if we have a mapping for this reference
-            if let Some(mapped) = mappings.get(name) {
-                *name = mapped.clone();
-            }
-        }
-        Type::Array(inner) => transform_type_references(inner, mappings),
-        Type::Optional(inner) => transform_type_references(inner, mappings),
-        Type::Map { value, .. } => transform_type_references(value, mappings),
-        Type::Record { fields, .. } => {
-            for field in fields.values_mut() {
-                transform_type_references(&mut field.ty, mappings);
-            }
-        }
-        Type::Union(types) => {
-            for ty in types {
-                transform_type_references(ty, mappings);
-            }
-        }
-        Type::TaggedUnion { variants, .. } => {
-            for variant_type in variants.values_mut() {
-                transform_type_references(variant_type, mappings);
-            }
-        }
-        _ => {} // Other types don't contain references
-    }
-}
 
 // Alias for tests
 #[allow(dead_code)]
@@ -512,11 +406,14 @@ fn needs_k8s_imports(ty: &Type) -> bool {
     // Check if the type references k8s.io types
     // This is a simplified check - would need more sophisticated analysis
     match ty {
-        Type::Reference(name) => name.contains("k8s.io") || name.contains("ObjectMeta"),
+        Type::Reference { name, module } => {
+            name.contains("k8s.io") || name.contains("ObjectMeta") ||
+            module.as_ref().map_or(false, |m| m.contains("k8s.io"))
+        },
         Type::Record { fields, .. } => fields.values().any(|field| needs_k8s_imports(&field.ty)),
         Type::Array(inner) => needs_k8s_imports(inner),
         Type::Optional(inner) => needs_k8s_imports(inner),
-        Type::Union(types) => types.iter().any(needs_k8s_imports),
+        Type::Union { types, .. } => types.iter().any(needs_k8s_imports),
         _ => false,
     }
 }

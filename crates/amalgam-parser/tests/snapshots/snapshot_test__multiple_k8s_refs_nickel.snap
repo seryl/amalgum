@@ -1,13 +1,12 @@
 ---
 source: crates/amalgam-parser/tests/snapshot_test.rs
-assertion_line: 68
 expression: content
 ---
 # Module: MultiRef.v1.test.io
 
 {
   MultiRef = {
-    metadata | optional | io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta,
+    metadata | optional | ObjectMeta,
     spec | optional | {
       resources | optional | Dyn,
       selector | optional | Dyn,

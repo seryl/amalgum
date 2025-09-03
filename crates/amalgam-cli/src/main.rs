@@ -145,6 +145,10 @@ enum ImportSource {
         /// Generate Nickel package manifest (experimental)
         #[arg(long)]
         nickel_package: bool,
+
+        /// Base directory for package resolution (defaults to current directory)
+        #[arg(long, env = "AMALGAM_PACKAGE_BASE")]
+        package_base: Option<PathBuf>,
     },
 
     /// Import from OpenAPI specification
@@ -175,6 +179,10 @@ enum ImportSource {
         /// Generate Nickel package manifest (experimental)
         #[arg(long)]
         nickel_package: bool,
+
+        /// Base directory for package resolution (defaults to current directory)
+        #[arg(long, env = "AMALGAM_PACKAGE_BASE")]
+        package_base: Option<PathBuf>,
     },
 
     /// Import from Kubernetes cluster (not implemented)
@@ -255,6 +263,7 @@ async fn handle_import(source: ImportSource) -> Result<()> {
             output,
             package,
             nickel_package,
+            package_base,
         } => {
             info!("Fetching CRDs from URL: {}", url);
 
@@ -306,20 +315,13 @@ async fn handle_import(source: ImportSource) -> Result<()> {
                     let version_dir = group_dir.join(&version);
                     fs::create_dir_all(&version_dir)?;
 
-                    // Write version module
-                    if let Some(version_mod) =
-                        package_structure.generate_version_module(&group, &version)
-                    {
-                        fs::write(version_dir.join("mod.ncl"), version_mod)?;
-                    }
-
-                    // Write individual kind files
-                    for kind in package_structure.kinds(&group, &version) {
-                        if let Some(kind_content) =
-                            package_structure.generate_kind_file(&group, &version, &kind)
-                        {
-                            fs::write(version_dir.join(format!("{}.ncl", kind)), kind_content)?;
-                        }
+                    // Generate all files for this version using batch generation
+                    // This ensures proper cross-version imports are generated
+                    let version_files = package_structure.generate_version_files(&group, &version);
+                    
+                    // Write all generated files
+                    for (filename, content) in version_files {
+                        fs::write(version_dir.join(&filename), content)?;
                     }
                 }
             }
@@ -367,54 +369,9 @@ async fn handle_import(source: ImportSource) -> Result<()> {
             let parser = CRDParser::new();
             let mut ir = parser.parse(crd.clone())?;
 
-            // Add imports for any k8s type references
-            use amalgam_core::ir::Import;
-            use amalgam_parser::imports::ImportResolver;
+            // Note: Import resolution is now handled by the walker pattern
+            // The CRDParser already adds necessary imports during IR generation
 
-            // Analyze the IR for external references and add imports
-            for module in &mut ir.modules {
-                let mut import_resolver = ImportResolver::new();
-
-                // Analyze all types in the module
-                for type_def in &module.types {
-                    import_resolver.analyze_type(&type_def.ty);
-                }
-
-                // Generate imports based on detected references
-                for type_ref in import_resolver.references() {
-                    // Get group and version from the CRD
-                    let group = &crd.spec.group;
-                    let version = crd
-                        .spec
-                        .versions
-                        .first()
-                        .map(|v| v.name.as_str())
-                        .unwrap_or("v1");
-
-                    // Convert TypeReference to Import
-                    let import_path = type_ref.import_path(group, version);
-                    let alias = Some(type_ref.module_alias());
-
-                    tracing::debug!(
-                        "Adding import for {:?} -> path: {}, alias: {:?}",
-                        type_ref,
-                        import_path,
-                        alias
-                    );
-
-                    module.imports.push(Import {
-                        path: import_path,
-                        alias,
-                        items: vec![], // Empty items means import the whole module
-                    });
-                }
-
-                tracing::debug!(
-                    "Module {} has {} imports",
-                    module.name,
-                    module.imports.len()
-                );
-            }
 
             // Generate Nickel code with package mode support
             let mut codegen = if package_mode {
@@ -482,49 +439,9 @@ async fn handle_import(source: ImportSource) -> Result<()> {
             let parser = OpenAPIParser::new();
             let mut ir = parser.parse(spec)?;
 
-            // Add imports for any k8s type references
-            use amalgam_core::ir::Import;
-            use amalgam_parser::imports::ImportResolver;
+            // Note: Import resolution is now handled by the walker pattern
+            // The CRDParser already adds necessary imports during IR generation
 
-            // Analyze the IR for external references and add imports
-            for module in &mut ir.modules {
-                let mut import_resolver = ImportResolver::new();
-
-                // Analyze all types in the module
-                for type_def in &module.types {
-                    import_resolver.analyze_type(&type_def.ty);
-                }
-
-                // Generate imports based on detected references
-                for type_ref in import_resolver.references() {
-                    // For OpenAPI, use a default group/version or extract from the spec
-                    let group = "api"; // Default group for OpenAPI specs
-                    let version = "v1"; // Default version
-
-                    // Convert TypeReference to Import
-                    let import_path = type_ref.import_path(group, version);
-                    let alias = Some(type_ref.module_alias());
-
-                    tracing::debug!(
-                        "Adding import for {:?} -> path: {}, alias: {:?}",
-                        type_ref,
-                        import_path,
-                        alias
-                    );
-
-                    module.imports.push(Import {
-                        path: import_path,
-                        alias,
-                        items: vec![], // Empty items means import the whole module
-                    });
-                }
-
-                tracing::debug!(
-                    "Module {} has {} imports",
-                    module.name,
-                    module.imports.len()
-                );
-            }
 
             // Generate Nickel code by default
             let mut codegen = NickelCodegen::new();
@@ -546,6 +463,7 @@ async fn handle_import(source: ImportSource) -> Result<()> {
             output,
             types: _,
             nickel_package,
+            package_base,
         } => {
             handle_k8s_core_import(&version, &output, nickel_package).await?;
             Ok(())

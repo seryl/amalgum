@@ -1,13 +1,12 @@
 ---
 source: crates/amalgam-parser/tests/snapshot_test.rs
-assertion_line: 28
 expression: generated
 ---
 # Module: Simple.v1.test.io
 
 {
   Simple = {
-    metadata | optional | io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta,
+    metadata | optional | ObjectMeta,
     spec | optional | {
       name | optional | String,
     },

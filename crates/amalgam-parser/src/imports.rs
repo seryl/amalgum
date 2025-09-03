@@ -1,7 +1,5 @@
 //! Import resolution for cross-package type references
 
-use amalgam_core::types::Type;
-use std::collections::{HashMap, HashSet};
 
 /// Represents a type reference that needs to be imported
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -180,99 +178,6 @@ impl TypeReference {
     }
 }
 
-/// Analyzes types to find external references that need imports
-pub struct ImportResolver {
-    /// Set of all type references found
-    references: HashSet<TypeReference>,
-    /// Known types that are already defined locally
-    local_types: HashSet<String>,
-}
-
-impl Default for ImportResolver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ImportResolver {
-    pub fn new() -> Self {
-        Self {
-            references: HashSet::new(),
-            local_types: HashSet::new(),
-        }
-    }
-
-    /// Add a locally defined type
-    pub fn add_local_type(&mut self, name: &str) {
-        self.local_types.insert(name.to_string());
-    }
-
-    /// Analyze a type and collect external references
-    pub fn analyze_type(&mut self, ty: &Type) {
-        match ty {
-            Type::Reference(name) => {
-                // Check if this is an external reference
-                if !self.local_types.contains(name) {
-                    if let Some(type_ref) = TypeReference::from_qualified_name(name) {
-                        tracing::trace!("ImportResolver: found external reference: {:?}", type_ref);
-                        self.references.insert(type_ref);
-                    } else {
-                        tracing::trace!("ImportResolver: could not parse reference: {}", name);
-                    }
-                }
-            }
-            Type::Array(inner) => self.analyze_type(inner),
-            Type::Optional(inner) => self.analyze_type(inner),
-            Type::Map { value, .. } => self.analyze_type(value),
-            Type::Record { fields, .. } => {
-                for field in fields.values() {
-                    self.analyze_type(&field.ty);
-                }
-            }
-            Type::Union(types) => {
-                for ty in types {
-                    self.analyze_type(ty);
-                }
-            }
-            Type::TaggedUnion { variants, .. } => {
-                for ty in variants.values() {
-                    self.analyze_type(ty);
-                }
-            }
-            Type::Contract { base, .. } => self.analyze_type(base),
-            _ => {}
-        }
-    }
-
-    /// Get all collected references
-    pub fn references(&self) -> &HashSet<TypeReference> {
-        &self.references
-    }
-
-    /// Generate import statements for Nickel
-    pub fn generate_imports(&self, from_group: &str, from_version: &str) -> Vec<String> {
-        let mut imports = Vec::new();
-
-        // Group references by their module
-        let mut by_module: HashMap<String, Vec<&TypeReference>> = HashMap::new();
-        for type_ref in &self.references {
-            let module_key = format!("{}/{}", type_ref.group, type_ref.version);
-            by_module.entry(module_key).or_default().push(type_ref);
-        }
-
-        // Generate import statements
-        for (_module, refs) in by_module {
-            let first_ref = refs[0];
-            let import_path = first_ref.import_path(from_group, from_version);
-            let alias = first_ref.module_alias();
-
-            imports.push(format!("let {} = import \"{}\" in", alias, import_path));
-        }
-
-        imports.sort();
-        imports
-    }
-}
 
 /// Common Kubernetes types that are frequently referenced
 pub fn common_k8s_types() -> Vec<TypeReference> {

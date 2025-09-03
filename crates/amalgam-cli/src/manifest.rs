@@ -380,18 +380,13 @@ impl Manifest {
                 let version_dir = group_dir.join(&version);
                 fs::create_dir_all(&version_dir)?;
 
-                if let Some(version_mod) =
-                    package_structure.generate_version_module(&group, &version)
-                {
-                    fs::write(version_dir.join("mod.ncl"), version_mod)?;
-                }
-
-                for kind in package_structure.kinds(&group, &version) {
-                    if let Some(kind_content) =
-                        package_structure.generate_kind_file(&group, &version, &kind)
-                    {
-                        fs::write(version_dir.join(format!("{}.ncl", kind)), kind_content)?;
-                    }
+                // Generate all files for this version using batch generation
+                // This ensures proper cross-version imports are generated
+                let version_files = package_structure.generate_version_files(&group, &version);
+                
+                // Write all generated files
+                for (filename, content) in version_files {
+                    fs::write(version_dir.join(&filename), content)?;
                 }
             }
         }

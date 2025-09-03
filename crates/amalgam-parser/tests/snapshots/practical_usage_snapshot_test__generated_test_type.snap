@@ -1,0 +1,17 @@
+---
+source: crates/amalgam-parser/tests/practical_usage_snapshot_test.rs
+expression: type_content
+---
+# Module: example.com.v1.testresource
+
+{
+  TestResource = {
+    spec | optional | {
+      image | optional | String,
+      replicas | optional | Number,
+    },
+    status | optional | {
+      ready | optional | Bool,
+    },
+  },
+}

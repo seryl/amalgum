@@ -13,9 +13,12 @@ IR {
                     ty: Record {
                         fields: {
                             "metadata": Field {
-                                ty: Reference(
-                                    "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta",
-                                ),
+                                ty: Reference {
+                                    name: "ObjectMeta",
+                                    module: Some(
+                                        "io.k8s.apimachinery.pkg.apis.meta.v1",
+                                    ),
+                                },
                                 required: false,
                                 description: None,
                                 default: None,

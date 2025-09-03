@@ -127,6 +127,7 @@ impl K8sTypesFetcher {
             "io.k8s.api.core.v1.ConfigMap",
             "io.k8s.api.core.v1.Secret",
             "io.k8s.api.core.v1.Node",
+            "io.k8s.api.core.v1.NodeSelector",
             "io.k8s.api.core.v1.Namespace",
             "io.k8s.api.core.v1.PersistentVolume",
             "io.k8s.api.core.v1.PersistentVolumeClaim",
@@ -168,6 +169,60 @@ impl K8sTypesFetcher {
             // Networking v1beta1 (beta APIs for newer features)
             "io.k8s.api.networking.v1beta1.IPAddress",
             "io.k8s.api.networking.v1beta1.ServiceCIDR",
+            // Admission Registration v1alpha1 (alpha APIs)
+            "io.k8s.api.admissionregistration.v1alpha1.MutatingAdmissionPolicy",
+            "io.k8s.api.admissionregistration.v1alpha1.MutatingAdmissionPolicyBinding",
+            // Admission Registration v1beta1 (beta APIs)
+            "io.k8s.api.admissionregistration.v1beta1.ValidatingAdmissionPolicy",
+            "io.k8s.api.admissionregistration.v1beta1.ValidatingAdmissionPolicyBinding",
+            // Apps v1beta1 & v1beta2 (legacy beta APIs still in use)
+            "io.k8s.api.apps.v1beta1.Deployment",
+            "io.k8s.api.apps.v1beta1.StatefulSet",
+            "io.k8s.api.apps.v1beta2.Deployment",
+            "io.k8s.api.apps.v1beta2.DaemonSet",
+            // Batch v1beta1 (beta batch APIs)
+            "io.k8s.api.batch.v1beta1.CronJob",
+            // Certificates v1alpha1 (alpha certificate APIs)
+            "io.k8s.api.certificates.v1alpha1.ClusterTrustBundle",
+            // Coordination v1alpha1 & v1beta1 (coordination APIs)  
+            "io.k8s.api.coordination.v1alpha1.LeaseCandidacy",
+            "io.k8s.api.coordination.v1alpha2.LeaseCandidacy",
+            // Extensions v1beta1 (deprecated but still present)
+            "io.k8s.api.extensions.v1beta1.Ingress",
+            "io.k8s.api.extensions.v1beta1.NetworkPolicy",
+            // FlowControl v1beta1, v1beta2, v1beta3 (API priority and fairness)
+            "io.k8s.api.flowcontrol.v1beta1.FlowSchema",
+            "io.k8s.api.flowcontrol.v1beta1.PriorityLevelConfiguration",
+            "io.k8s.api.flowcontrol.v1beta2.FlowSchema",
+            "io.k8s.api.flowcontrol.v1beta2.PriorityLevelConfiguration",
+            "io.k8s.api.flowcontrol.v1beta3.FlowSchema",
+            "io.k8s.api.flowcontrol.v1beta3.PriorityLevelConfiguration",
+            // Networking v1alpha1 (alpha networking features)
+            "io.k8s.api.networking.v1alpha1.ServiceDNS",
+            "io.k8s.api.networking.v1alpha1.ServiceTrafficDistribution",
+            // Node v1alpha1 & v1beta1 (node runtime APIs)
+            "io.k8s.api.node.v1alpha1.RuntimeClass",
+            "io.k8s.api.node.v1beta1.RuntimeClass",
+            // Policy v1beta1 (beta policy APIs)
+            "io.k8s.api.policy.v1beta1.PodDisruptionBudget",
+            "io.k8s.api.policy.v1beta1.PodSecurityPolicy",
+            // Resource v1alpha1, v1alpha2, v1alpha3, v1beta1 (resource management)
+            "io.k8s.api.resource.v1alpha1.AllocationRequest",
+            "io.k8s.api.resource.v1alpha1.ResourceClaim",
+            "io.k8s.api.resource.v1alpha2.ResourceClaim",
+            "io.k8s.api.resource.v1alpha2.ResourceClass",
+            "io.k8s.api.resource.v1alpha3.DeviceClass",
+            "io.k8s.api.resource.v1alpha3.ResourceClaim",
+            "io.k8s.api.resource.v1beta1.DeviceClass",
+            // Scheduling v1alpha1 & v1beta1 (scheduling APIs)
+            "io.k8s.api.scheduling.v1alpha1.PriorityClass",
+            "io.k8s.api.scheduling.v1beta1.PriorityClass",
+            // Storage v1alpha1 & v1beta1 (storage APIs beyond VolumeAttributesClass)
+            "io.k8s.api.storage.v1alpha1.VolumeAttributesClass",
+            "io.k8s.api.storage.v1beta1.CSIStorageCapacity",
+            "io.k8s.api.storage.v1beta1.VolumeAttributesClass",
+            // StorageMigration v1alpha1 (storage migration APIs)
+            "io.k8s.api.storagemigration.v1alpha1.StorageVersionMigration",
             // Resource quantities and other utilities
             "io.k8s.apimachinery.pkg.api.resource.Quantity",
         ];
@@ -331,16 +386,36 @@ impl K8sTypesFetcher {
                 name if name.ends_with(".Time") || name.ends_with(".MicroTime") => Type::String,
                 name if name.ends_with(".Duration") => Type::String,
                 name if name.ends_with(".IntOrString") => {
-                    Type::Union(vec![Type::Integer, Type::String])
+                    Type::Union {
+                        types: vec![Type::Integer, Type::String],
+                        coercion_hint: Some(amalgam_core::types::UnionCoercion::PreferString),
+                    }
                 }
                 name if name.ends_with(".Quantity") => Type::String,
                 name if name.ends_with(".FieldsV1") => Type::Any,
                 name if name.starts_with("io.k8s.") => {
-                    // For k8s internal references, use short name
+                    // For k8s internal references, use short name but preserve module info
                     let short_name = name.split('.').next_back().unwrap_or(name);
-                    Type::Reference(short_name.to_string())
+                    // Extract module path (everything before the last component)
+                    let module = if name.contains('.') {
+                        let parts: Vec<&str> = name.split('.').collect();
+                        if parts.len() > 1 {
+                            Some(parts[..parts.len() - 1].join("."))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    Type::Reference {
+                        name: short_name.to_string(),
+                        module,
+                    }
                 }
-                _ => Type::Reference(type_name.to_string()),
+                _ => Type::Reference {
+                    name: type_name.to_string(),
+                    module: None,
+                },
             });
         }
 
@@ -390,7 +465,10 @@ impl K8sTypesFetcher {
                                 name if name.ends_with(".Duration") => Type::String,
                                 // IntOrString can be either
                                 name if name.ends_with(".IntOrString") => {
-                                    Type::Union(vec![Type::Integer, Type::String])
+                                    Type::Union {
+                                        types: vec![Type::Integer, Type::String],
+                                        coercion_hint: Some(amalgam_core::types::UnionCoercion::PreferString),
+                                    }
                                 }
                                 // Quantity is a string (like "100m" or "1Gi")
                                 name if name.ends_with(".Quantity")
@@ -403,12 +481,28 @@ impl K8sTypesFetcher {
                                 // For other k8s references within the same module, keep as reference
                                 // but only use the short name
                                 name if name.starts_with("io.k8s.") => {
-                                    // Extract just the type name (last part)
+                                    // Extract just the type name (last part) but preserve module info
                                     let short_name = name.split('.').next_back().unwrap_or(name);
-                                    Type::Reference(short_name.to_string())
+                                    let module = if name.contains('.') {
+                                        let parts: Vec<&str> = name.split('.').collect();
+                                        if parts.len() > 1 {
+                                            Some(parts[..parts.len() - 1].join("."))
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    Type::Reference {
+                                        name: short_name.to_string(),
+                                        module,
+                                    }
                                 }
                                 // Keep full reference for non-k8s types
-                                _ => Type::Reference(type_name.to_string()),
+                                _ => Type::Reference {
+                                    name: type_name.to_string(),
+                                    module: None,
+                                },
                             };
 
                             fields.insert(
@@ -438,16 +532,35 @@ impl K8sTypesFetcher {
                                         }
                                         s if s.ends_with(".Duration") => Type::String,
                                         s if s.ends_with(".IntOrString") => {
-                                            Type::Union(vec![Type::Integer, Type::String])
+                                            Type::Union {
+                                                types: vec![Type::Integer, Type::String],
+                                                coercion_hint: Some(amalgam_core::types::UnionCoercion::PreferString),
+                                            }
                                         }
                                         s if s.ends_with(".Quantity") => Type::String,
                                         s if s.ends_with(".FieldsV1") => Type::Any,
                                         s if s.starts_with("io.k8s.") => {
-                                            // Extract just the type name (last part)
+                                            // Extract just the type name (last part) but preserve module info
                                             let short_name = s.split('.').next_back().unwrap_or(s);
-                                            Type::Reference(short_name.to_string())
+                                            let module = if s.contains('.') {
+                                                let parts: Vec<&str> = s.split('.').collect();
+                                                if parts.len() > 1 {
+                                                    Some(parts[..parts.len() - 1].join("."))
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            };
+                                            Type::Reference {
+                                                name: short_name.to_string(),
+                                                module,
+                                            }
                                         }
-                                        _ => Type::Reference(type_str.clone()),
+                                        _ => Type::Reference {
+                                            name: type_str.clone(),
+                                            module: None,
+                                        },
                                     };
 
                                     fields.insert(
@@ -491,7 +604,20 @@ impl K8sTypesFetcher {
                 // Check for $ref
                 if let Some(ref_path) = schema.get("$ref").and_then(|r| r.as_str()) {
                     let type_name = ref_path.trim_start_matches("#/definitions/");
-                    Ok(Type::Reference(type_name.to_string()))
+                    // Extract module information if present
+                    let (name, module) = if type_name.starts_with("io.k8s.") && type_name.contains('.') {
+                        let parts: Vec<&str> = type_name.split('.').collect();
+                        if parts.len() > 1 {
+                            let short_name = parts[parts.len() - 1].to_string();
+                            let module_path = parts[..parts.len() - 1].join(".");
+                            (short_name, Some(module_path))
+                        } else {
+                            (type_name.to_string(), None)
+                        }
+                    } else {
+                        (type_name.to_string(), None)
+                    };
+                    Ok(Type::Reference { name, module })
                 } else {
                     Ok(Type::Any)
                 }

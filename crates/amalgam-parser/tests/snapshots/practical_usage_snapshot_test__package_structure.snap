@@ -1,0 +1,16 @@
+---
+source: crates/amalgam-parser/tests/practical_usage_snapshot_test.rs
+expression: snapshot_content
+---
+SUCCESS: false
+
+OUTPUT:
+STDERR:
+error: unbound identifier `NodeSelector`
+  ┌─ /Users/jtoft/src/ai/amalgam/examples/pkgs/k8s_io/v1alpha3/allocationresult.ncl:9:31
+  │
+9 │     nodeSelector | optional | NodeSelector | doc m%"
+  │                               ^^^^^^^^^^^^ this identifier is unbound
+
+
+STDOUT:

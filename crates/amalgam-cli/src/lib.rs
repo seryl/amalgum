@@ -56,8 +56,14 @@ fn collect_type_references(
     use amalgam_core::types::Type;
 
     match ty {
-        Type::Reference(name) => {
-            refs.insert(name.clone());
+        Type::Reference { name, module } => {
+            // Include module info if present
+            let full_name = if let Some(module) = module {
+                format!("{}.{}", module, name)
+            } else {
+                name.clone()
+            };
+            refs.insert(full_name);
         }
         Type::Array(inner) => collect_type_references(inner, refs),
         Type::Optional(inner) => collect_type_references(inner, refs),
@@ -67,7 +73,7 @@ fn collect_type_references(
                 collect_type_references(&field.ty, refs);
             }
         }
-        Type::Union(types) => {
+        Type::Union { types, .. } => {
             for t in types {
                 collect_type_references(t, refs);
             }
@@ -89,7 +95,7 @@ fn apply_type_replacements(
     use amalgam_core::types::Type;
 
     match ty {
-        Type::Reference(name) => {
+        Type::Reference { name, .. } => {
             if let Some(replacement) = replacements.get(name) {
                 *name = replacement.clone();
             }
@@ -102,7 +108,7 @@ fn apply_type_replacements(
                 apply_type_replacements(&mut field.ty, replacements);
             }
         }
-        Type::Union(types) => {
+        Type::Union { types, .. } => {
             for t in types {
                 apply_type_replacements(t, replacements);
             }
@@ -168,36 +174,49 @@ pub async fn handle_k8s_core_import(
             // Collect any references to other types in the same module
             let mut referenced_types = std::collections::HashSet::new();
             collect_type_references(&type_def.ty, &mut referenced_types);
+            
+            if type_ref.kind == "VolumeAttributesClass" {
+                tracing::info!(
+                    "VolumeAttributesClass references: {:?}",
+                    referenced_types
+                );
+            }
 
             // For each referenced type, check if it exists in the same version
             for referenced in &referenced_types {
-                // Check if this is a simple type name (not a full path)
-                if !referenced.contains('.') && referenced != &type_ref.kind {
+                // Extract the type name from the full path (e.g., "io.k8s.api.core.v1.ObjectMeta" -> "ObjectMeta")
+                let type_name = if referenced.contains('.') {
+                    referenced.split('.').last().unwrap_or(referenced.as_str())
+                } else {
+                    referenced.as_str()
+                };
+                
+                if type_name != &type_ref.kind {
                     // Check if this type exists in the same version
-                    if version_types.iter().any(|(tr, _)| tr.kind == *referenced) {
+                    if version_types.iter().any(|(tr, _)| tr.kind == type_name) {
                         // Add import for the type in the same directory
-                        let alias = referenced.to_lowercase();
+                        let alias = type_name.to_lowercase();
                         imports.push(amalgam_core::ir::Import {
                             path: format!("./{}.ncl", alias),
                             alias: Some(alias.clone()),
-                            items: vec![referenced.clone()],
+                            items: vec![type_name.to_string()],
                         });
 
                         // Store replacement: ManagedFieldsEntry -> managedfieldsentry.ManagedFieldsEntry
                         type_replacements
-                            .insert(referenced.clone(), format!("{}.{}", alias, referenced));
-                    } else if is_core_k8s_type(referenced) {
+                            .insert(type_name.to_string(), format!("{}.{}", alias, type_name));
+                    } else if is_core_k8s_type(type_name) {
                         // Check if this is a core k8s type that should be imported from v1
                         // Common core types are usually in v1 even when referenced from other versions
                         let source_version = "v1";
                         if version != source_version {
                             // Import from v1 directory
-                            let alias = referenced; // Use the actual type name as alias
+                            let alias = type_name; // Use the actual type name as alias
                             imports.push(amalgam_core::ir::Import {
                                 path: format!(
                                     "../{}/{}.ncl",
                                     source_version,
-                                    referenced.to_lowercase()
+                                    type_name.to_lowercase()
                                 ),
                                 alias: Some(alias.to_string()),
                                 items: vec![],
@@ -206,18 +225,18 @@ pub async fn handle_k8s_core_import(
                             // Store replacement: Type remains as Type (e.g., ObjectMeta remains as ObjectMeta)
                             // No need to qualify since we're importing with the same name
                         }
-                    } else if is_unversioned_k8s_type(referenced) {
+                    } else if is_unversioned_k8s_type(type_name) {
                         // Check if this is an unversioned k8s type (like RawExtension)
                         // These types are placed in v0 directory
                         let source_version = "v0";
                         if version != source_version {
                             // Import from v0 directory
-                            let alias = referenced; // Use the actual type name as alias
+                            let alias = type_name; // Use the actual type name as alias
                             imports.push(amalgam_core::ir::Import {
                                 path: format!(
                                     "../{}/{}.ncl",
                                     source_version,
-                                    referenced.to_lowercase()
+                                    type_name.to_lowercase()
                                 ),
                                 alias: Some(alias.to_string()),
                                 items: vec![],

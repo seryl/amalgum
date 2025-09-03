@@ -44,12 +44,14 @@ fn test_k8s_type_reference_detection() {
         // - Type::Object (if it's just marked as 'type: object' in the CRD)
 
         match &metadata_field.ty {
-            Type::Reference(name) => {
-                assert_eq!(name, "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta");
+            Type::Reference { name, module } => {
+                assert_eq!(name, "ObjectMeta");
+                assert_eq!(module.as_deref(), Some("io.k8s.apimachinery.pkg.apis.meta.v1"));
             }
             Type::Optional(inner) => {
-                if let Type::Reference(name) = &**inner {
-                    assert_eq!(name, "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta");
+                if let Type::Reference { name, module } = &**inner {
+                    assert_eq!(name, "ObjectMeta");
+                    assert_eq!(module.as_deref(), Some("io.k8s.apimachinery.pkg.apis.meta.v1"));
                 } else {
                     // For this test, metadata is just an object, not a k8s reference
                     // This is OK - the parser doesn't automatically add k8s references
@@ -89,7 +91,8 @@ fn test_import_generation_for_k8s_types() {
         .expect("Failed to generate package");
 
     // Get the generated content for a resource that uses k8s types
-    if let Some(content) = ns_package.generate_kind_file("test.io", "v1", "simple") {
+    let version_files = ns_package.generate_version_files("test.io", "v1");
+    if let Some(content) = version_files.get("simple.ncl") {
         // Verify the import is present
         assert!(content.contains("import"), "Missing import statement");
         assert!(content.contains("k8s_io"), "Missing k8s import");
@@ -123,7 +126,10 @@ fn test_reference_resolution_to_alias() {
     fields.insert(
         "metadata".to_string(),
         Field {
-            ty: Type::Reference("io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta".to_string()),
+            ty: Type::Reference {
+                name: "ObjectMeta".to_string(),
+                module: Some("io.k8s.apimachinery.pkg.apis.meta.v1".to_string()),
+            },
             required: false,
             default: None,
             description: Some("Standard Kubernetes metadata".to_string()),
@@ -238,7 +244,10 @@ fn test_case_insensitive_type_matching() {
     fields.insert(
         "metadata".to_string(),
         Field {
-            ty: Type::Reference("io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta".to_string()),
+            ty: Type::Reference {
+                name: "ObjectMeta".to_string(),
+                module: Some("io.k8s.apimachinery.pkg.apis.meta.v1".to_string()),
+            },
             required: false,
             default: None,
             description: None,

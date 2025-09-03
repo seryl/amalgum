@@ -1,6 +1,5 @@
 ---
 source: crates/amalgam-parser/tests/snapshot_test.rs
-assertion_line: 120
 expression: all_versions
 ---
 # Module: Evolving.v1alpha1.test.io
@@ -26,7 +25,7 @@ expression: all_versions
 
 {
   Evolving = {
-    metadata | optional | io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta,
+    metadata | optional | ObjectMeta,
     spec | optional | {
       field1 | optional | String,
       field2 | optional | Number,

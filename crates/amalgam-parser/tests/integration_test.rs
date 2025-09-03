@@ -423,15 +423,14 @@ spec:
     }
 
     // Verify we can generate files for each version
-    assert!(package
-        .generate_kind_file("test.io", "v1alpha1", "evolving")
-        .is_some());
-    assert!(package
-        .generate_kind_file("test.io", "v1beta1", "evolving")
-        .is_some());
-    assert!(package
-        .generate_kind_file("test.io", "v1", "evolving")
-        .is_some());
+    let v1alpha1_files = package.generate_version_files("test.io", "v1alpha1");
+    assert!(v1alpha1_files.contains_key("evolving.ncl"));
+    
+    let v1beta1_files = package.generate_version_files("test.io", "v1beta1");
+    assert!(v1beta1_files.contains_key("evolving.ncl"));
+    
+    let v1_files = package.generate_version_files("test.io", "v1");
+    assert!(v1_files.contains_key("evolving.ncl"));
 }
 
 #[test]

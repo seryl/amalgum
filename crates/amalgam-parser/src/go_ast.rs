@@ -496,7 +496,7 @@ func isPointerType(expr ast.Expr) bool {
                 Ok(Type::Optional(Box::new(inner)))
             }
             // Handle qualified types (e.g., metav1.ObjectMeta)
-            s => Ok(Type::Reference(s.to_string())),
+            s => Ok(Type::Reference { name: s.to_string(), module: None }),
         }
     }
 

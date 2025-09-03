@@ -81,7 +81,10 @@ impl OpenAPIParser {
                         types.push(self.schema_to_type(schema)?);
                     }
                 }
-                Ok(Type::Union(types))
+                Ok(Type::Union {
+                    types,
+                    coercion_hint: None,
+                })
             }
             SchemaKind::AllOf { all_of: _ } => {
                 // For now, treat as Any - would need more complex merging
@@ -94,7 +97,10 @@ impl OpenAPIParser {
                         types.push(self.schema_to_type(schema)?);
                     }
                 }
-                Ok(Type::Union(types))
+                Ok(Type::Union {
+                    types,
+                    coercion_hint: None,
+                })
             }
             SchemaKind::Not { .. } => {
                 Err(ParserError::UnsupportedFeature("'not' schema".to_string()))

@@ -178,9 +178,15 @@ impl DependencyAnalyzer {
         location: &str,
     ) {
         match ty {
-            Type::Reference(name) => {
+            Type::Reference { name, module } => {
                 // Check if this is an external type reference
-                if let Some(type_ref) = self.parse_type_reference(name, location) {
+                // If module is provided, use it; otherwise try to parse from the name
+                let full_name = if let Some(module) = module {
+                    format!("{}.{}", module, name)
+                } else {
+                    name.clone()
+                };
+                if let Some(type_ref) = self.parse_type_reference(&full_name, location) {
                     refs.insert(type_ref);
                 }
             }
@@ -199,7 +205,7 @@ impl DependencyAnalyzer {
                     self.collect_type_references(&field.ty, refs, &field_location);
                 }
             }
-            Type::Union(types) => {
+            Type::Union { types, .. } => {
                 for t in types {
                     self.collect_type_references(t, refs, location);
                 }

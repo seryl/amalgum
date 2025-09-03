@@ -57,7 +57,7 @@ impl GoCodegen {
                 Ok(result)
             }
 
-            Type::Union(_) => {
+            Type::Union { .. } => {
                 // Go doesn't have union types, use interface{}
                 Ok("interface{}".to_string())
             }
@@ -67,7 +67,7 @@ impl GoCodegen {
                 Ok("interface{}".to_string())
             }
 
-            Type::Reference(name) => Ok(name.clone()),
+            Type::Reference { name, .. } => Ok(name.clone()),
 
             Type::Contract { .. } => {
                 // Contracts become interfaces in Go

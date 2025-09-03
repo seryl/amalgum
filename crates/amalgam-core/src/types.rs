@@ -3,6 +3,19 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Hint for how to handle union types in target languages
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum UnionCoercion {
+    /// Prefer string representation (e.g., for IntOrString)
+    PreferString,
+    /// Prefer numeric representation
+    PreferNumber,
+    /// No preference - generate actual union
+    NoPreference,
+    /// Custom handler
+    Custom(String),
+}
+
 /// Core type representation - algebraic data types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
@@ -28,8 +41,12 @@ pub enum Type {
         open: bool, // Whether additional fields are allowed
     },
 
-    /// Sum type (enum/union)
-    Union(Vec<Type>),
+    /// Sum type (enum/union) with optional coercion hint
+    Union {
+        types: Vec<Type>,
+        /// Hint for how to handle this union in target languages
+        coercion_hint: Option<UnionCoercion>,
+    },
 
     /// Tagged union (discriminated)
     TaggedUnion {
@@ -37,8 +54,13 @@ pub enum Type {
         variants: BTreeMap<String, Type>,
     },
 
-    /// Reference to another type
-    Reference(String),
+    /// Reference to another type with optional module information
+    Reference {
+        name: String,
+        /// Full module path if this is a cross-module reference
+        /// e.g., "io.k8s.api.core.v1" for NodeSelector
+        module: Option<String>,
+    },
 
     /// Contract/refinement type
     Contract {
@@ -81,14 +103,14 @@ impl TypeSystem {
             (Type::Null, Type::Optional(_)) => true,
             (s, Type::Optional(t)) => self.is_compatible(s, t),
             (Type::Integer, Type::Number) => true,
-            (Type::Reference(s), t) => {
+            (Type::Reference { name: s, .. }, t) => {
                 if let Some(resolved) = self.resolve(s) {
                     self.is_compatible(resolved, t)
                 } else {
                     false
                 }
             }
-            (s, Type::Reference(t)) => {
+            (s, Type::Reference { name: t, .. }) => {
                 if let Some(resolved) = self.resolve(t) {
                     self.is_compatible(s, resolved)
                 } else {
@@ -96,8 +118,8 @@ impl TypeSystem {
                 }
             }
             (Type::Array(s), Type::Array(t)) => self.is_compatible(s, t),
-            (Type::Union(variants), t) => variants.iter().all(|v| self.is_compatible(v, t)),
-            (s, Type::Union(variants)) => variants.iter().any(|v| self.is_compatible(s, v)),
+            (Type::Union { types, .. }, t) => types.iter().all(|v| self.is_compatible(v, t)),
+            (s, Type::Union { types, .. }) => types.iter().any(|v| self.is_compatible(s, v)),
             _ => source == target,
         }
     }
@@ -126,10 +148,13 @@ mod tests {
         assert!(ts.is_compatible(&Type::Null, &Type::Optional(Box::new(Type::String))));
 
         // Test reference resolution
-        assert!(ts.is_compatible(&Type::Reference("MyString".to_string()), &Type::String));
+        assert!(ts.is_compatible(&Type::Reference { name: "MyString".to_string(), module: None }, &Type::String));
 
         // Test union types
-        let union = Type::Union(vec![Type::String, Type::Number]);
+        let union = Type::Union {
+            types: vec![Type::String, Type::Number],
+            coercion_hint: None,
+        };
         assert!(ts.is_compatible(&Type::String, &union));
         assert!(ts.is_compatible(&Type::Number, &union));
         assert!(!ts.is_compatible(&Type::Bool, &union));
